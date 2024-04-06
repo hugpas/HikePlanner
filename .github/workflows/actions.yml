@@ -1,31 +1,58 @@
-name: Azure Deployment
+name: Image Build
+
 on:
   push:
+    paths:
+      - '**.py'
+      - 'Dockerfile'
+      - '.github/workflows/**'
   workflow_dispatch:
 
 jobs:
-  build_and_deploy:
+  manual-steps:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      
+      - uses: actions/checkout@v3
+
+      - name: setup python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12.1'
+          cache: 'pip'
+
+      - name: install python packages
+        run: pip install -r requirements.txt
+
+      - name: scrape hikr data
+        working-directory: ./spider
+        run: scrapy crawl gpx -s CLOSESPIDER_PAGECOUNT=500 -o file.jl
+
+      - name: upload data to mongodb
+        working-directory: spider/downloads
+        run: python ./mongo_import.py -c tracks -i ../file.jl -u "${{ secrets.MONGODB_URI }}"
+
+      - name: build model
+        working-directory: model
+        run: python ./model.py -u "${{ secrets.MONGODB_URI }}"
+
+      - name: upload model
+        working-directory: model
+        run: python ./save.py -c "${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}"
+
+  docker-build-and-push:
+    if: ${{ github.event_name == 'push' }}
+    needs: manual-steps
+    runs-on: ubuntu-latest
+    steps:
       - name: Log in to Docker Hub
         uses: docker/login-action@v1
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
-      
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v2
         with:
           push: true
           tags: hugpas05/hikeplanner:latest
-
-      - name: Login to Azure
-        uses: azure/login@v1
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
-      
-      - name: Deploy to Azure Container Instance
-      - run: |
-          az container create --resource-group mdm-hikeplanner --name mdm-hikeplanner --image hugpas05/hikeplanner:latest --dns-name-label hugpas-mdm-hikeplanner --ports 80 --environment-variables 'AZURE_STORAGE_CONNECTION_STRING=${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}'
