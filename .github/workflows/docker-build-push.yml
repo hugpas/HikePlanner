@@ -3,9 +3,6 @@ name: Docker Build and Push
 on:
   push:
     paths:
-      - '**.py'
-      - 'Dockerfile'
-      - '.github/workflows/**'
 
 jobs:
   docker-build-and-push:
