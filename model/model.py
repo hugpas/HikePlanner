@@ -4,10 +4,15 @@
 
 import argparse
 
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.preprocessing import Normalizer
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sn
 from pymongo import MongoClient
+from sklearn.ensemble import GradientBoostingRegressor
 
 parser = argparse.ArgumentParser(description='Create Model')
 parser.add_argument('-u', '--uri', required=True, help="mongodb uri with username/password")
@@ -29,7 +34,12 @@ values = [track.values() for track in collection.find(projection={"gpx": 0, "url
 df = pd.DataFrame(columns=track.keys(), data=values).set_index("_id")
 
 df['avg_speed'] = df['length_3d']/df['moving_time']
-df['difficulty_num'] = df['difficulty'].map(lambda x: int(x[1])).astype('int32')
+
+# Making numeric values out of the difficulties
+difficulty_mapping = {'T1': 1, 'T2': 2, 'T3': 3, 'T3+': 3.25, 'T4-': 3.75, 'T4': 4, 'T4+': 4.25, 'T5-': 4.75, 'T5': 5, 'T5+': 5.25}
+df['difficulty'] = df['difficulty'].map(difficulty_mapping).astype(float)
+
+df['elevation'] = df['uphill'] - df['downhill']
 
 # drop na values
 df.dropna()
@@ -43,13 +53,18 @@ print(corr)
 sn.heatmap(corr, annot=True)
 # plt.show()
 
-from sklearn.linear_model import LinearRegression
-from sklearn.metrics import mean_squared_error, r2_score
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import Normalizer
+def perform_cross_validation(x, y):
+    gbr = GradientBoostingRegressor(n_estimators=50, random_state=9000)
+    scores = cross_val_score(gbr, x, y, cv=5, scoring='neg_mean_squared_error')
+    mse_scores = -scores
+    print("Cross-Validation MSE Scores:", mse_scores)
+    print("Mean MSE:", mse_scores.mean())
+    print("Standard Deviation of MSE:", mse_scores.std())
 
 y = df.reset_index()['moving_time']
 x = df.reset_index()[['downhill', 'uphill', 'length_3d', 'max_elevation']]
+
+perform_cross_validation(x, y)
 
 x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.20, random_state=42)
 
@@ -64,9 +79,6 @@ mse = mean_squared_error(y_test, y_pred_lr)
 # Mean Squared Error / R2
 print("r2:\t{}\nMSE: \t{}".format(r2, mse))
 
-# GradientBoostingRegressor
-from sklearn.ensemble import GradientBoostingRegressor
-from sklearn.model_selection import train_test_split
 
 gbr = GradientBoostingRegressor(n_estimators=50, random_state=9000)
 gbr.fit(x_train, y_train)
